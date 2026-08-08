@@ -2,10 +2,14 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import {
   collection,
   addDoc,
+  deleteDoc,
+  doc,
+  getDocs,
   query,
   where,
   onSnapshot,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "./AuthContext";
@@ -41,15 +45,29 @@ export function AppDataProvider({ children }) {
       name,
       sub: sub || "Sem destino definido",
       dates: dates || "Datas por definir",
-      members: 1,
+      // Nota: ainda não há convites reais — a lista de participantes é sempre
+      // este grupo fixo (MEMBERS), por isso a contagem reflete isso mesmo,
+      // e não quantas pessoas "convidaste" de verdade.
+      members: MEMBERS.length,
       status: "ativa",
       ownerId: user.uid,
       createdAt: serverTimestamp(),
     });
   };
 
+  // Apaga a viagem e todas as despesas/pagamentos guardados lá dentro (subcoleção),
+  // para não deixar dados "órfãos" perdidos no Firestore.
+  const deleteTrip = async (tripId) => {
+    const expensesRef = collection(db, "trips", tripId, "expenses");
+    const snapshot = await getDocs(expensesRef);
+    const batch = writeBatch(db);
+    snapshot.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(doc(db, "trips", tripId));
+    await batch.commit();
+  };
+
   return (
-    <AppDataContext.Provider value={{ trips, loadingTrips, members: MEMBERS, createTrip }}>
+    <AppDataContext.Provider value={{ trips, loadingTrips, members: MEMBERS, createTrip, deleteTrip }}>
       {children}
     </AppDataContext.Provider>
   );
