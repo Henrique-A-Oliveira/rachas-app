@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plane, Plus, X } from "lucide-react";
+import { Plane, Plus, X, LogOut } from "lucide-react";
 import { C } from "../theme/colors";
 import { useAppData } from "../data/AppDataContext";
+import { useAuth } from "../data/AuthContext";
 import Avatar from "../components/Avatar";
 import TripCard from "../components/TripCard";
 
@@ -74,7 +75,11 @@ function CreateTripModal({ onClose, onSave }) {
 export default function HomeScreen() {
   const navigate = useNavigate();
   const { trips, createTrip } = useAppData();
+  const { user, signOut } = useAuth();
   const [showCreateTrip, setShowCreateTrip] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+
+  const displayName = user?.displayName || user?.email || "Tu";
 
   const openTrip = (trip) => navigate(`/viagens/${trip.id}`, { state: { trip } });
 
@@ -83,14 +88,41 @@ export default function HomeScreen() {
     setShowCreateTrip(false);
   };
 
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/");
+  };
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: C.sand }}>
       <div style={{ background: C.ink }}>
-        <div className="flex items-center justify-between px-5 py-4 max-w-md mx-auto">
+        <div className="flex items-center justify-between px-5 py-4 max-w-md mx-auto relative">
           <h1 className="f-display text-2xl" style={{ color: C.paper }}>
             As tuas viagens
           </h1>
-          <Avatar name="Tu" tone={C.gold} />
+          <button onClick={() => setShowMenu((s) => !s)}>
+            <Avatar name={displayName} tone={C.gold} />
+          </button>
+          {showMenu && (
+            <div
+              className="absolute right-5 top-16 rounded-2xl overflow-hidden shadow-xl z-20"
+              style={{ background: C.paper, border: `1px solid ${C.line}`, minWidth: 180 }}
+            >
+              <div className="px-4 py-3" style={{ borderBottom: `1px solid ${C.line}` }}>
+                <p className="f-body text-xs font-semibold truncate" style={{ color: C.ink }}>{displayName}</p>
+                {user?.email && (
+                  <p className="f-body text-xs truncate" style={{ color: C.inkSoft }}>{user.email}</p>
+                )}
+              </div>
+              <button
+                onClick={handleSignOut}
+                className="w-full flex items-center gap-2 px-4 py-3 f-body text-sm"
+                style={{ color: C.coral }}
+              >
+                <LogOut size={14} /> Terminar sessão
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

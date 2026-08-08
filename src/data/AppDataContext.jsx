@@ -1,55 +1,55 @@
-import React, { createContext, useContext, useState } from "react";
-import { INITIAL_TRIPS, INITIAL_FEED, CATS, MEMBERS } from "../data/mockData";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  onSnapshot,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "./AuthContext";
+import { MEMBERS } from "./mockData";
 
 const AppDataContext = createContext(null);
 
 export function AppDataProvider({ children }) {
-  const [trips, setTrips] = useState(INITIAL_TRIPS);
-  // Nota: o feed ainda é partilhado por todas as viagens (mock global), tal
-  // como no protótipo. Isolar por viagem fica para quando ligar a uma base de dados real.
-  const [feed, setFeed] = useState(INITIAL_FEED);
+  const { user } = useAuth();
+  const [trips, setTrips] = useState([]);
+  const [loadingTrips, setLoadingTrips] = useState(true);
 
-  const createTrip = ({ name, sub, dates }) => {
-    const newTrip = {
-      id: Date.now(),
+  useEffect(() => {
+    if (!user) {
+      setTrips([]);
+      setLoadingTrips(false);
+      return;
+    }
+    setLoadingTrips(true);
+    const q = query(collection(db, "trips"), where("ownerId", "==", user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // Ordenar no cliente (mais recente primeiro) para não precisar de índice composto no Firestore.
+      list.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setTrips(list);
+      setLoadingTrips(false);
+    });
+    return unsubscribe;
+  }, [user]);
+
+  const createTrip = async ({ name, sub, dates }) => {
+    await addDoc(collection(db, "trips"), {
       name,
       sub: sub || "Sem destino definido",
       dates: dates || "Datas por definir",
       members: 1,
       status: "ativa",
-    };
-    setTrips((t) => [newTrip, ...t]);
-  };
-
-  const saveExpense = ({ id, amount, category, n, participants }) => {
-    if (id) {
-      setFeed((f) =>
-        f.map((item) =>
-          item.id === id ? { ...item, desc: CATS[category].label, amount, category, n, participants } : item
-        )
-      );
-    } else {
-      setFeed((f) => [
-        ...f,
-        { id: Date.now(), type: "expense", person: "Tu", desc: CATS[category].label, amount, category, time: "Agora", n, participants },
-      ]);
-    }
-  };
-
-  const deleteExpense = (id) => setFeed((f) => f.filter((item) => item.id !== id));
-
-  // Simplificação do MVP: assume-se que a liquidação é sempre feita com "Tu".
-  const settle = (name, balance) => {
-    if (!balance) return;
-    const payment =
-      balance < 0
-        ? { id: Date.now(), type: "payment", from: name, to: "Tu", amount: Math.abs(balance), time: "Agora" }
-        : { id: Date.now(), type: "payment", from: "Tu", to: name, amount: Math.abs(balance), time: "Agora" };
-    setFeed((f) => [...f, payment]);
+      ownerId: user.uid,
+      createdAt: serverTimestamp(),
+    });
   };
 
   return (
-    <AppDataContext.Provider value={{ trips, feed, members: MEMBERS, createTrip, saveExpense, deleteExpense, settle }}>
+    <AppDataContext.Provider value={{ trips, loadingTrips, members: MEMBERS, createTrip }}>
       {children}
     </AppDataContext.Provider>
   );

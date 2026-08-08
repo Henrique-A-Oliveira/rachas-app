@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /trips/{tripId} {
+      // Só o dono da viagem pode ler, editar ou apagar a viagem em si.
+      allow read, update, delete: if request.auth != null
+        && request.auth.uid == resource.data.ownerId;
+
+      // Só se pode criar uma viagem em próprio nome (não em nome de outra pessoa).
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.ownerId;
+
+      match /expenses/{expenseId} {
+        // Só o dono da viagem pode ler/escrever despesas dentro dela.
+        allow read, write: if request.auth != null
+          && get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid;
+      }
+    }
+  }
+}

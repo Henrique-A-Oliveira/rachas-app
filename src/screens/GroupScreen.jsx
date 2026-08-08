@@ -5,6 +5,7 @@ import { C } from "../theme/colors";
 import { computeBalances } from "../utils/balances";
 import { CATS } from "../data/mockData";
 import { useAppData } from "../data/AppDataContext";
+import { useTripFeed } from "../data/useTripFeed";
 import Avatar from "../components/Avatar";
 import BalancePill from "../components/BalancePill";
 import FeedRow from "../components/FeedRow";
@@ -14,9 +15,10 @@ export default function GroupScreen() {
   const navigate = useNavigate();
   const { id } = useParams();
   const location = useLocation();
-  const { trips, feed, members, saveExpense, deleteExpense, settle } = useAppData();
+  const { trips, members } = useAppData();
+  const { feed, loadingFeed, saveExpense, deleteExpense, settle } = useTripFeed(id);
 
-  const trip = location.state?.trip || trips.find((t) => String(t.id) === id);
+  const trip = location.state?.trip || trips.find((t) => t.id === id);
 
   const [tab, setTab] = useState("feed");
   const [showAdd, setShowAdd] = useState(false);
@@ -25,10 +27,14 @@ export default function GroupScreen() {
   if (!trip) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4" style={{ background: C.sand }}>
-        <p className="f-body text-sm" style={{ color: C.inkSoft }}>Viagem não encontrada.</p>
-        <button onClick={() => navigate("/viagens")} className="f-body text-sm font-semibold px-4 py-2 rounded-full" style={{ background: C.ink, color: C.paper }}>
-          Voltar às viagens
-        </button>
+        <p className="f-body text-sm" style={{ color: C.inkSoft }}>
+          {loadingFeed ? "A carregar…" : "Viagem não encontrada."}
+        </p>
+        {!loadingFeed && (
+          <button onClick={() => navigate("/viagens")} className="f-body text-sm font-semibold px-4 py-2 rounded-full" style={{ background: C.ink, color: C.paper }}>
+            Voltar às viagens
+          </button>
+        )}
       </div>
     );
   }
