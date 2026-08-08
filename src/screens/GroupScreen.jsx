@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import { ArrowLeft, Plus, Check } from "lucide-react";
+import { ArrowLeft, Plus, Check, Trash2 } from "lucide-react";
 import { C } from "../theme/colors";
 import { computeBalances } from "../utils/balances";
 import { CATS } from "../data/mockData";
@@ -15,8 +15,9 @@ export default function GroupScreen() {
   const navigate = useNavigate();
   const { id } = useParams();
   const location = useLocation();
-  const { trips, members } = useAppData();
+  const { trips, members, deleteTrip } = useAppData();
   const { feed, loadingFeed, saveExpense, deleteExpense, settle } = useTripFeed(id);
+  const [deleting, setDeleting] = useState(false);
 
   const trip = location.state?.trip || trips.find((t) => t.id === id);
 
@@ -38,6 +39,20 @@ export default function GroupScreen() {
       </div>
     );
   }
+
+  const handleDeleteTrip = async () => {
+    if (!window.confirm(`Apagar a viagem "${trip.name}"? Isto apaga também todas as despesas registadas. Não se pode desfazer.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteTrip(id);
+      navigate("/viagens");
+    } catch (err) {
+      alert("Não foi possível apagar a viagem. Tenta novamente.");
+      setDeleting(false);
+    }
+  };
 
   const balances = computeBalances(feed, members);
   const yourBalance = balances["Tu"] || 0;
@@ -70,6 +85,9 @@ export default function GroupScreen() {
               </span>
             </div>
             <BalancePill value={yourBalance} />
+            <button onClick={handleDeleteTrip} disabled={deleting} style={{ opacity: deleting ? 0.5 : 1 }}>
+              <Trash2 size={18} color="rgba(251,248,242,0.6)" />
+            </button>
           </div>
           <div className="flex px-4 gap-6">
             {[
