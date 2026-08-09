@@ -1,0 +1,491 @@
+diff --git a/firestore.rules b/firestore.rules
+index 6b2afdf..bf6310d 100644
+--- a/firestore.rules
++++ b/firestore.rules
+@@ -3,18 +3,28 @@ service cloud.firestore {
+   match /databases/{database}/documents {
+ 
+     match /trips/{tripId} {
+-      // Só o dono da viagem pode ler, editar ou apagar a viagem em si.
++      // Qualquer membro da viagem (não só o dono) pode ler, editar ou apagar.
+       allow read, update, delete: if request.auth != null
+-        && request.auth.uid == resource.data.ownerId;
++        && request.auth.uid in resource.data.memberIds;
+ 
+-      // Só se pode criar uma viagem em próprio nome (não em nome de outra pessoa).
++      // Só se pode criar uma viagem em próprio nome, e já como membro dela.
+       allow create: if request.auth != null
+-        && request.auth.uid == request.resource.data.ownerId;
++        && request.auth.uid == request.resource.data.ownerId
++        && request.auth.uid in request.resource.data.memberIds;
++
++      // Entrar via link de convite: quem ainda não é membro só pode fazer um
++      // pedido que (a) mantenha o mesmo inviteCode, (b) se adicione a si próprio
++      // a memberIds/members, e (c) não mexa em mais nenhum campo da viagem.
++      allow update: if request.auth != null
++        && !(request.auth.uid in resource.data.memberIds)
++        && request.auth.uid in request.resource.data.memberIds
++        && request.resource.data.inviteCode == resource.data.inviteCode
++        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'members']);
+ 
+       match /expenses/{expenseId} {
+-        // Só o dono da viagem pode ler/escrever despesas dentro dela.
++        // Só um membro da viagem pode ler/escrever despesas dentro dela.
+         allow read, write: if request.auth != null
+-          && get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid;
++          && request.auth.uid in get(/databases/$(database)/documents/trips/$(tripId)).data.memberIds;
+       }
+     }
+   }
+diff --git a/src/App.jsx b/src/App.jsx
+index aa50d56..c25e4d0 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -5,6 +5,7 @@ import { AppDataProvider } from "./data/AppDataContext";
+ import LoginScreen from "./screens/LoginScreen";
+ import HomeScreen from "./screens/HomeScreen";
+ import GroupScreen from "./screens/GroupScreen";
++import JoinTripScreen from "./screens/JoinTripScreen";
+ import { C } from "./theme/colors";
+ 
+ function LoadingScreen() {
+@@ -37,6 +38,8 @@ function AppRoutes() {
+       <Route path="/" element={<RedirectIfAuthed><LoginScreen /></RedirectIfAuthed>} />
+       <Route path="/viagens" element={<RequireAuth><HomeScreen /></RequireAuth>} />
+       <Route path="/viagens/:id" element={<RequireAuth><GroupScreen /></RequireAuth>} />
++      {/* Sem RequireAuth: este ecrã lida com ambos os casos (com ou sem sessão iniciada). */}
++      <Route path="/entrar/:id" element={<JoinTripScreen />} />
+       <Route path="*" element={<Navigate to="/" replace />} />
+     </Routes>
+   );
+diff --git a/src/components/TripCard.jsx b/src/components/TripCard.jsx
+index 4acf4bf..417c87a 100644
+--- a/src/components/TripCard.jsx
++++ b/src/components/TripCard.jsx
+@@ -31,7 +31,7 @@ export default function TripCard({ trip, onOpen }) {
+             </p>
+             <div className="flex items-center gap-1" style={{ color: C.inkSoft }}>
+               <Users size={13} />
+-              <span className="f-body text-xs">{trip.members} amigos</span>
++              <span className="f-body text-xs">{trip.members?.length || 0} amigos</span>
+             </div>
+           </div>
+           <div className="relative flex items-center justify-center px-2" style={{ borderLeft: `2px dashed ${C.line}` }}>
+diff --git a/src/data/AppDataContext.jsx b/src/data/AppDataContext.jsx
+index f28adf2..2cc928a 100644
+--- a/src/data/AppDataContext.jsx
++++ b/src/data/AppDataContext.jsx
+@@ -4,19 +4,29 @@ import {
+   addDoc,
+   deleteDoc,
+   doc,
++  getDoc,
+   getDocs,
+   query,
+   where,
+   onSnapshot,
+   serverTimestamp,
+   writeBatch,
++  updateDoc,
++  arrayUnion,
+ } from "firebase/firestore";
+ import { db } from "../firebase";
+ import { useAuth } from "./AuthContext";
+-import { MEMBERS } from "./mockData";
+ 
+ const AppDataContext = createContext(null);
+ 
++// Código de convite curto e fácil de meter num link (ex: "K3F7QX").
++function generateInviteCode() {
++  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sem O/0/I/1 para evitar confusões
++  let code = "";
++  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
++  return code;
++}
++
+ export function AppDataProvider({ children }) {
+   const { user } = useAuth();
+   const [trips, setTrips] = useState([]);
+@@ -29,7 +39,8 @@ export function AppDataProvider({ children }) {
+       return;
+     }
+     setLoadingTrips(true);
+-    const q = query(collection(db, "trips"), where("ownerId", "==", user.uid));
++    // array-contains: mostra viagens onde o utilizador é membro, não só o dono.
++    const q = query(collection(db, "trips"), where("memberIds", "array-contains", user.uid));
+     const unsubscribe = onSnapshot(q, (snapshot) => {
+       const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+       // Ordenar no cliente (mais recente primeiro) para não precisar de índice composto no Firestore.
+@@ -41,20 +52,39 @@ export function AppDataProvider({ children }) {
+   }, [user]);
+ 
+   const createTrip = async ({ name, sub, dates }) => {
++    const me = { uid: user.uid, name: user.displayName || user.email || "Tu" };
+     await addDoc(collection(db, "trips"), {
+       name,
+       sub: sub || "Sem destino definido",
+       dates: dates || "Datas por definir",
+-      // Nota: ainda não há convites reais — a lista de participantes é sempre
+-      // este grupo fixo (MEMBERS), por isso a contagem reflete isso mesmo,
+-      // e não quantas pessoas "convidaste" de verdade.
+-      members: MEMBERS.length,
+       status: "ativa",
+       ownerId: user.uid,
++      memberIds: [user.uid],
++      members: [me],
++      inviteCode: generateInviteCode(),
+       createdAt: serverTimestamp(),
+     });
+   };
+ 
++  // Entrar numa viagem através de um link de convite (id + código).
++  // Devolve a viagem se o código bater certo, ou lança erro caso contrário.
++  const joinTrip = async (tripId, inviteCode) => {
++    const tripRef = doc(db, "trips", tripId);
++    const snap = await getDoc(tripRef);
++    if (!snap.exists()) throw new Error("Viagem não encontrada.");
++    const trip = snap.data();
++    if (trip.inviteCode !== inviteCode) throw new Error("Código de convite inválido.");
++
++    if (trip.memberIds?.includes(user.uid)) return { id: tripId, ...trip }; // já é membro
++
++    const me = { uid: user.uid, name: user.displayName || user.email || "Convidado" };
++    await updateDoc(tripRef, {
++      memberIds: arrayUnion(user.uid),
++      members: arrayUnion(me),
++    });
++    return { id: tripId, ...trip, memberIds: [...(trip.memberIds || []), user.uid], members: [...(trip.members || []), me] };
++  };
++
+   // Apaga a viagem e todas as despesas/pagamentos guardados lá dentro (subcoleção),
+   // para não deixar dados "órfãos" perdidos no Firestore.
+   const deleteTrip = async (tripId) => {
+@@ -67,7 +97,7 @@ export function AppDataProvider({ children }) {
+   };
+ 
+   return (
+-    <AppDataContext.Provider value={{ trips, loadingTrips, members: MEMBERS, createTrip, deleteTrip }}>
++    <AppDataContext.Provider value={{ trips, loadingTrips, createTrip, deleteTrip, joinTrip }}>
+       {children}
+     </AppDataContext.Provider>
+   );
+diff --git a/src/data/useTripFeed.js b/src/data/useTripFeed.js
+index 92e1d71..6639a1d 100644
+--- a/src/data/useTripFeed.js
++++ b/src/data/useTripFeed.js
+@@ -10,8 +10,11 @@ import {
+ } from "firebase/firestore";
+ import { db } from "../firebase";
+ import { CATS } from "./mockData";
++import { useAuth } from "./AuthContext";
+ 
+ export function useTripFeed(tripId) {
++  const { user } = useAuth();
++  const myName = user?.displayName || user?.email || "Tu";
+   const [feed, setFeed] = useState([]);
+   const [loadingFeed, setLoadingFeed] = useState(true);
+ 
+@@ -35,7 +38,7 @@ export function useTripFeed(tripId) {
+     } else {
+       await addDoc(ref, {
+         type: "expense",
+-        person: "Tu",
++        person: myName,
+         desc: CATS[category].label,
+         amount,
+         category,
+@@ -51,16 +54,16 @@ export function useTripFeed(tripId) {
+     await deleteDoc(doc(db, "trips", tripId, "expenses", id));
+   };
+ 
+-  // Simplificação do MVP: assume-se que a liquidação é sempre feita com "Tu".
++  // Simplificação do MVP: assume-se que a liquidação é sempre feita com quem está a usar a app.
+   const settle = async (name, balance) => {
+     if (!balance) return;
+     const ref = collection(db, "trips", tripId, "expenses");
+     const payment =
+       balance < 0
+-        ? { type: "payment", from: name, to: "Tu", amount: Math.abs(balance), time: "Agora" }
+-        : { type: "payment", from: "Tu", to: name, amount: Math.abs(balance), time: "Agora" };
++        ? { type: "payment", from: name, to: myName, amount: Math.abs(balance), time: "Agora" }
++        : { type: "payment", from: myName, to: name, amount: Math.abs(balance), time: "Agora" };
+     await addDoc(ref, { ...payment, createdAt: serverTimestamp() });
+   };
+ 
+-  return { feed, loadingFeed, saveExpense, deleteExpense, settle };
++  return { feed, loadingFeed, saveExpense, deleteExpense, settle, myName };
+ }
+diff --git a/src/screens/ExpenseModal.jsx b/src/screens/ExpenseModal.jsx
+index 315637c..cdf4d05 100644
+--- a/src/screens/ExpenseModal.jsx
++++ b/src/screens/ExpenseModal.jsx
+@@ -1,12 +1,13 @@
+ import React, { useState } from "react";
+ import { X } from "lucide-react";
+ import { C } from "../theme/colors";
+-import { CATS, MEMBERS } from "../data/mockData";
++import { CATS } from "../data/mockData";
+ 
+-export default function ExpenseModal({ onClose, onSave, initial, onDelete }) {
++export default function ExpenseModal({ onClose, onSave, initial, onDelete, members }) {
++  const memberNames = members.map((m) => m.name);
+   const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+   const [category, setCategory] = useState(initial ? initial.category : "restaurantes");
+-  const [selected, setSelected] = useState(initial ? initial.participants : MEMBERS);
++  const [selected, setSelected] = useState(initial ? initial.participants : memberNames);
+   const isEditing = Boolean(initial);
+ 
+   const toggle = (m) => setSelected((s) => (s.includes(m) ? s.filter((x) => x !== m) : [...s, m]));
+@@ -62,8 +63,8 @@ export default function ExpenseModal({ onClose, onSave, initial, onDelete }) {
+         <p className="f-body text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: C.inkSoft }}>
+           Quem está envolvido
+         </p>
+-        <div className="flex gap-2 mb-6">
+-          {MEMBERS.map((m) => {
++        <div className="flex gap-2 mb-6 flex-wrap">
++          {memberNames.map((m) => {
+             const active = selected.includes(m);
+             return (
+               <button key={m} onClick={() => toggle(m)} className="flex flex-col items-center gap-1">
+diff --git a/src/screens/GroupScreen.jsx b/src/screens/GroupScreen.jsx
+index eb0bd9f..6f25bed 100644
+--- a/src/screens/GroupScreen.jsx
++++ b/src/screens/GroupScreen.jsx
+@@ -1,6 +1,6 @@
+ import React, { useState } from "react";
+ import { useNavigate, useParams, useLocation } from "react-router-dom";
+-import { ArrowLeft, Plus, Check, Trash2 } from "lucide-react";
++import { ArrowLeft, Plus, Check, Trash2, UserPlus, Copy } from "lucide-react";
+ import { C } from "../theme/colors";
+ import { computeBalances } from "../utils/balances";
+ import { CATS } from "../data/mockData";
+@@ -15,11 +15,15 @@ export default function GroupScreen() {
+   const navigate = useNavigate();
+   const { id } = useParams();
+   const location = useLocation();
+-  const { trips, members, deleteTrip } = useAppData();
+-  const { feed, loadingFeed, saveExpense, deleteExpense, settle } = useTripFeed(id);
++  const { trips, deleteTrip } = useAppData();
++  const { feed, loadingFeed, saveExpense, deleteExpense, settle, myName } = useTripFeed(id);
+   const [deleting, setDeleting] = useState(false);
++  const [showInvite, setShowInvite] = useState(false);
++  const [copied, setCopied] = useState(false);
+ 
+-  const trip = location.state?.trip || trips.find((t) => t.id === id);
++  // Prioriza a versão em tempo real (para refletir novos membros a entrar);
++  // usa o estado da navegação só como fallback para o primeiro render.
++  const trip = trips.find((t) => t.id === id) || location.state?.trip;
+ 
+   const [tab, setTab] = useState("feed");
+   const [showAdd, setShowAdd] = useState(false);
+@@ -54,8 +58,10 @@ export default function GroupScreen() {
+     }
+   };
+ 
+-  const balances = computeBalances(feed, members);
+-  const yourBalance = balances["Tu"] || 0;
++  const members = trip.members || [];
++  const memberNames = members.map((m) => m.name);
++  const balances = computeBalances(feed, memberNames);
++  const yourBalance = balances[myName] || 0;
+ 
+   const totals = {};
+   feed.forEach((f) => {
+@@ -63,11 +69,22 @@ export default function GroupScreen() {
+   });
+   const totalSpent = Object.values(totals).reduce((a, b) => a + b, 0);
+ 
+-  const people = members.filter((m) => m !== "Tu").map((name) => ({
++  const people = memberNames.filter((name) => name !== myName).map((name) => ({
+     name,
+     balance: Math.round((balances[name] || 0) * 100) / 100,
+   }));
+ 
++  const inviteLink = `${window.location.origin}${window.location.pathname}#/entrar/${trip.id}?c=${trip.inviteCode}`;
++  const copyInviteLink = async () => {
++    try {
++      await navigator.clipboard.writeText(inviteLink);
++      setCopied(true);
++      setTimeout(() => setCopied(false), 2000);
++    } catch {
++      window.prompt("Copia o link do convite:", inviteLink);
++    }
++  };
++
+   return (
+     <div className="min-h-screen flex flex-col" style={{ background: C.sand }}>
+       <div style={{ background: C.ink }}>
+@@ -81,10 +98,13 @@ export default function GroupScreen() {
+                 {trip.name}
+               </h2>
+               <span className="f-body text-xs" style={{ color: "rgba(251,248,242,0.55)" }}>
+-                {trip.members} amigos
++                {memberNames.length} amigos
+               </span>
+             </div>
+             <BalancePill value={yourBalance} />
++            <button onClick={() => setShowInvite(true)}>
++              <UserPlus size={18} color="rgba(251,248,242,0.6)" />
++            </button>
+             <button onClick={handleDeleteTrip} disabled={deleting} style={{ opacity: deleting ? 0.5 : 1 }}>
+               <Trash2 size={18} color="rgba(251,248,242,0.6)" />
+             </button>
+@@ -163,18 +183,47 @@ export default function GroupScreen() {
+ 
+       {showAdd && (
+         <ExpenseModal
++          members={members}
+           onClose={() => setShowAdd(false)}
+           onSave={(data) => { saveExpense(data); setTab("feed"); }}
+         />
+       )}
+       {editingExpense && (
+         <ExpenseModal
++          members={members}
+           initial={editingExpense}
+           onClose={() => setEditingExpense(null)}
+           onSave={(data) => { saveExpense(data); setTab("feed"); }}
+           onDelete={deleteExpense}
+         />
+       )}
++      {showInvite && (
++        <div className="fixed inset-0 flex flex-col justify-end z-30" style={{ background: "rgba(30,42,56,0.5)" }} onClick={() => setShowInvite(false)}>
++          <div className="rounded-t-3xl p-5 pb-8 max-w-md w-full mx-auto" style={{ background: C.paper }} onClick={(e) => e.stopPropagation()}>
++            <h3 className="f-display text-xl mb-2" style={{ color: C.ink }}>Convidar amigos</h3>
++            <p className="f-body text-sm mb-4" style={{ color: C.inkSoft }}>
++              Partilha este link — quem entrar (autenticado) junta-se logo à viagem.
++            </p>
++            <div className="flex items-center gap-2 p-3 rounded-2xl mb-4" style={{ background: "rgba(30,42,56,0.06)" }}>
++              <span className="f-mono text-xs flex-1 truncate" style={{ color: C.ink }}>{inviteLink}</span>
++            </div>
++            <button
++              onClick={copyInviteLink}
++              className="w-full flex items-center justify-center gap-2 f-body text-sm font-semibold py-3 rounded-full"
++              style={{ background: C.coral, color: C.paper }}
++            >
++              <Copy size={16} /> {copied ? "Copiado!" : "Copiar link"}
++            </button>
++            <button
++              onClick={() => setShowInvite(false)}
++              className="w-full f-body text-sm font-medium py-3 mt-2 rounded-full"
++              style={{ color: C.inkSoft }}
++            >
++              Fechar
++            </button>
++          </div>
++        </div>
++      )}
+     </div>
+   );
+ }
+diff --git a/src/screens/JoinTripScreen.jsx b/src/screens/JoinTripScreen.jsx
+new file mode 100644
+index 0000000..6a60711
+--- /dev/null
++++ b/src/screens/JoinTripScreen.jsx
+@@ -0,0 +1,63 @@
++import React, { useEffect, useState } from "react";
++import { useNavigate, useParams, useSearchParams } from "react-router-dom";
++import { Plane } from "lucide-react";
++import { C } from "../theme/colors";
++import { useAuth } from "../data/AuthContext";
++import { useAppData } from "../data/AppDataContext";
++
++const PENDING_INVITE_KEY = "rachas_pending_invite";
++
++export default function JoinTripScreen() {
++  const navigate = useNavigate();
++  const { id } = useParams();
++  const [searchParams] = useSearchParams();
++  const code = searchParams.get("c") || "";
++  const { user, loading: loadingAuth } = useAuth();
++  const { joinTrip } = useAppData();
++  const [status, setStatus] = useState("a-entrar"); // a-entrar | erro
++  const [error, setError] = useState("");
++
++  useEffect(() => {
++    if (loadingAuth) return;
++
++    if (!user) {
++      // Guarda o convite para retomar assim que a pessoa iniciar sessão.
++      sessionStorage.setItem(PENDING_INVITE_KEY, JSON.stringify({ id, code }));
++      navigate("/");
++      return;
++    }
++
++    (async () => {
++      try {
++        await joinTrip(id, code);
++        sessionStorage.removeItem(PENDING_INVITE_KEY);
++        navigate(`/viagens/${id}`);
++      } catch (err) {
++        setStatus("erro");
++        setError(err.message || "Não foi possível entrar nesta viagem.");
++      }
++    })();
++  }, [loadingAuth, user, id, code]);
++
++  return (
++    <div className="min-h-screen flex flex-col items-center justify-center px-8 text-center gap-4" style={{ background: C.ink }}>
++      <Plane size={26} style={{ color: C.gold, transform: "rotate(45deg)" }} />
++      {status === "a-entrar" ? (
++        <p className="f-body text-sm" style={{ color: "rgba(251,248,242,0.7)" }}>A entrar na viagem…</p>
++      ) : (
++        <>
++          <p className="f-body text-sm" style={{ color: C.coral }}>{error}</p>
++          <button
++            onClick={() => navigate("/viagens")}
++            className="f-body text-sm font-semibold px-5 py-3 rounded-full"
++            style={{ background: C.paper, color: C.ink }}
++          >
++            Voltar às viagens
++          </button>
++        </>
++      )}
++    </div>
++  );
++}
++
++export { PENDING_INVITE_KEY };
+diff --git a/src/screens/LoginScreen.jsx b/src/screens/LoginScreen.jsx
+index 09d47ee..d52f1b8 100644
+--- a/src/screens/LoginScreen.jsx
++++ b/src/screens/LoginScreen.jsx
+@@ -3,6 +3,19 @@ import { useNavigate } from "react-router-dom";
+ import { Plane } from "lucide-react";
+ import { C } from "../theme/colors";
+ import { useAuth } from "../data/AuthContext";
++import { PENDING_INVITE_KEY } from "./JoinTripScreen";
++
++// Depois de entrar, se havia um convite de viagem por aceitar, retoma-o;
++// caso contrário vai para a lista de viagens normal.
++function goAfterLogin(navigate) {
++  const pending = sessionStorage.getItem(PENDING_INVITE_KEY);
++  if (pending) {
++    const { id, code } = JSON.parse(pending);
++    navigate(`/entrar/${id}?c=${code}`);
++  } else {
++    navigate("/viagens");
++  }
++}
+ 
+ export default function LoginScreen() {
+   const navigate = useNavigate();
+@@ -31,7 +44,7 @@ export default function LoginScreen() {
+     setLoading(true);
+     try {
+       await signInGoogle();
+-      navigate("/viagens");
++      goAfterLogin(navigate);
+     } catch (err) {
+       setError(friendlyError(err));
+     } finally {
+@@ -49,7 +62,7 @@ export default function LoginScreen() {
+       } else {
+         await signInEmail(email, password);
+       }
+-      navigate("/viagens");
++      goAfterLogin(navigate);
+     } catch (err) {
+       setError(friendlyError(err));
+     } finally {
