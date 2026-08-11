@@ -2,12 +2,15 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import {
   collection,
   addDoc,
+  deleteDoc,
   doc,
   getDoc,
+  getDocs,
   query,
   where,
   onSnapshot,
   serverTimestamp,
+  writeBatch,
   updateDoc,
   arrayUnion,
 } from "firebase/firestore";
@@ -79,16 +82,22 @@ export function AppDataProvider({ children }) {
       memberIds: arrayUnion(user.uid),
       members: arrayUnion(me),
     });
-    return {
-      id: tripId,
-      ...trip,
-      memberIds: [...(trip.memberIds || []), user.uid],
-      members: [...(trip.members || []), me],
-    };
+    return { id: tripId, ...trip, memberIds: [...(trip.memberIds || []), user.uid], members: [...(trip.members || []), me] };
+  };
+
+  // Apaga a viagem e todas as despesas/pagamentos guardados lá dentro (subcoleção),
+  // para não deixar dados "órfãos" perdidos no Firestore.
+  const deleteTrip = async (tripId) => {
+    const expensesRef = collection(db, "trips", tripId, "expenses");
+    const snapshot = await getDocs(expensesRef);
+    const batch = writeBatch(db);
+    snapshot.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(doc(db, "trips", tripId));
+    await batch.commit();
   };
 
   return (
-    <AppDataContext.Provider value={{ trips, loadingTrips, createTrip, joinTrip }}>
+    <AppDataContext.Provider value={{ trips, loadingTrips, createTrip, deleteTrip, joinTrip }}>
       {children}
     </AppDataContext.Provider>
   );
