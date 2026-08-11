@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import { ArrowLeft, Plus, Check, UserPlus, Copy } from "lucide-react";
+import { ArrowLeft, Plus, Check, Trash2, UserPlus, Copy } from "lucide-react";
 import { C } from "../theme/colors";
 import { computeBalances } from "../utils/balances";
 import { CATS } from "../data/mockData";
@@ -15,8 +15,11 @@ export default function GroupScreen() {
   const navigate = useNavigate();
   const { id } = useParams();
   const location = useLocation();
-  const { trips } = useAppData();
+  const { trips, deleteTrip } = useAppData();
   const { feed, loadingFeed, saveExpense, deleteExpense, settle, myName } = useTripFeed(id);
+  const [deleting, setDeleting] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Prioriza a versão em tempo real (para refletir novos membros a entrar);
   // usa o estado da navegação só como fallback para o primeiro render.
@@ -25,8 +28,6 @@ export default function GroupScreen() {
   const [tab, setTab] = useState("feed");
   const [showAdd, setShowAdd] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
-  const [showInvite, setShowInvite] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   if (!trip) {
     return (
@@ -42,6 +43,20 @@ export default function GroupScreen() {
       </div>
     );
   }
+
+  const handleDeleteTrip = async () => {
+    if (!window.confirm(`Apagar a viagem "${trip.name}"? Isto apaga também todas as despesas registadas. Não se pode desfazer.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteTrip(id);
+      navigate("/viagens");
+    } catch (err) {
+      alert("Não foi possível apagar a viagem. Tenta novamente.");
+      setDeleting(false);
+    }
+  };
 
   const members = trip.members || [];
   const memberNames = members.map((m) => m.name);
@@ -89,6 +104,9 @@ export default function GroupScreen() {
             <BalancePill value={yourBalance} />
             <button onClick={() => setShowInvite(true)}>
               <UserPlus size={18} color="rgba(251,248,242,0.6)" />
+            </button>
+            <button onClick={handleDeleteTrip} disabled={deleting} style={{ opacity: deleting ? 0.5 : 1 }}>
+              <Trash2 size={18} color="rgba(251,248,242,0.6)" />
             </button>
           </div>
           <div className="flex px-4 gap-6">
