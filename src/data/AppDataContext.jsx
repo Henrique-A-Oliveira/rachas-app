@@ -66,23 +66,24 @@ export function AppDataProvider({ children }) {
     });
   };
 
-  // Entrar numa viagem através de um link de convite (id + código).
-  // Devolve a viagem se o código bater certo, ou lança erro caso contrário.
+// Entrar numa viagem através de um link de convite (id + código).
+  // Não faz leitura prévia (isso exigiria abrir a leitura a todos os autenticados,
+  // o que expunha dados de viagens a quem não devia). Em vez disso, tenta logo
+  // escrever-se como membro, enviando o código junto — é o próprio Firestore
+  // que valida o código nas regras de segurança, e recusa o pedido se estiver errado.
   const joinTrip = async (tripId, inviteCode) => {
     const tripRef = doc(db, "trips", tripId);
-    const snap = await getDoc(tripRef);
-    if (!snap.exists()) throw new Error("Viagem não encontrada.");
-    const trip = snap.data();
-    if (trip.inviteCode !== inviteCode) throw new Error("Código de convite inválido.");
-
-    if (trip.memberIds?.includes(user.uid)) return { id: tripId, ...trip }; // já é membro
-
     const me = { uid: user.uid, name: user.displayName || user.email || "Convidado" };
-    await updateDoc(tripRef, {
-      memberIds: arrayUnion(user.uid),
-      members: arrayUnion(me),
-    });
-    return { id: tripId, ...trip, memberIds: [...(trip.memberIds || []), user.uid], members: [...(trip.members || []), me] };
+    try {
+      await updateDoc(tripRef, {
+        memberIds: arrayUnion(user.uid),
+        members: arrayUnion(me),
+        joinCode: inviteCode,
+      });
+    } catch (err) {
+      throw new Error("Não foi possível entrar nesta viagem. Confirma que o link está completo e correto.");
+    }
+    return { id: tripId };
   };
 
   // Apaga a viagem e todas as despesas/pagamentos guardados lá dentro (subcoleção),
