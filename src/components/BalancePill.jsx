@@ -1,5 +1,6 @@
 import React from "react";
 import { C } from "../theme/colors";
+import { formatEuro } from "../utils/format";
 
 export default function BalancePill({ value }) {
   const positive = value >= 0;
@@ -12,7 +13,7 @@ export default function BalancePill({ value }) {
         {positive ? "Devem-te" : "Deves"}
       </span>
       <span className="f-mono text-sm font-semibold" style={{ color: positive ? C.sea : C.coral }}>
-        {Math.abs(value)}€
+        {formatEuro(Math.abs(value))}€
       </span>
     </div>
   );
