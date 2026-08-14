@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { ArrowLeft, Plus, Check, Trash2, UserPlus, Copy } from "lucide-react";
 import { C } from "../theme/colors";
 import { computeBalances } from "../utils/balances";
+import { formatEuro } from "../utils/format";
 import { CATS } from "../data/mockData";
 import { useAppData } from "../data/AppDataContext";
 import { useTripFeed } from "../data/useTripFeed";
@@ -163,7 +164,7 @@ export default function GroupScreen() {
                   ) : (
                     <>
                       <span className="f-mono text-xs font-semibold" style={{ color: p.balance > 0 ? C.sea : C.coral }}>
-                        {p.balance > 0 ? `+${p.balance}€` : `${p.balance}€`}
+                        {p.balance > 0 ? `+${formatEuro(p.balance)}€` : `${formatEuro(p.balance)}€`}
                       </span>
                       <button onClick={() => settle(p.name, p.balance)} className="f-body text-xs font-medium px-2.5 py-1 rounded-full" style={{ background: C.ink, color: C.paper }}>
                         Marcar pago
