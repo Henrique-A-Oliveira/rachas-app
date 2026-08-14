@@ -2,6 +2,7 @@ import React from "react";
 import { Check } from "lucide-react";
 import { C } from "../theme/colors";
 import { CATS } from "../data/mockData";
+import { formatEuro } from "../utils/format";
 import Avatar from "./Avatar";
 
 export default function FeedRow({ item, onEdit }) {
@@ -11,7 +12,7 @@ export default function FeedRow({ item, onEdit }) {
         <div className="h-px flex-1" style={{ background: C.line }} />
         <div className="flex items-center gap-1.5 f-body text-xs px-3 py-1 rounded-full" style={{ background: "rgba(47,143,111,0.1)", color: C.sea }}>
           <Check size={12} />
-          {item.from} pagou {item.amount}€ a {item.to}
+          {item.from} pagou {formatEuro(item.amount)}€ a {item.to}
         </div>
         <div className="h-px flex-1" style={{ background: C.line }} />
       </div>
@@ -44,7 +45,7 @@ export default function FeedRow({ item, onEdit }) {
               </span>
             </div>
             <span className="f-mono text-sm font-semibold" style={{ color: C.ink }}>
-              {item.amount}€
+              {formatEuro(item.amount)}€
             </span>
           </div>
           <p className="f-body text-xs mt-1" style={{ color: C.inkSoft }}>
