@@ -147,15 +147,15 @@ export default function GroupScreen() {
                     <div className="flex-1">
                       {p.balance !== 0 ? (
                         <span className="f-body text-sm" style={{ color: C.ink }}>
-                          {p.balance > 0 ? (
+                          {p.balance < 0 ? (
                             <>
                               <span style={{ color: C.inkSoft }}>{p.name} deve-te </span>
-                              <span className="f-mono font-semibold" style={{ color: C.sea }}>{formatEuro(p.balance)}€</span>
+                              <span className="f-mono font-semibold" style={{ color: C.sea }}>{formatEuro(Math.abs(p.balance))}€</span>
                             </>
                           ) : (
                             <>
                               <span style={{ color: C.inkSoft }}>Deves </span>
-                              <span className="f-mono font-semibold" style={{ color: C.coral }}>{formatEuro(Math.abs(p.balance))}€</span>
+                              <span className="f-mono font-semibold" style={{ color: C.coral }}>{formatEuro(p.balance)}€</span>
                               <span style={{ color: C.inkSoft }}> a {p.name}</span>
                             </>
                           )}
