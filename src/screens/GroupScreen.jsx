@@ -113,6 +113,7 @@ export default function GroupScreen() {
           <div className="flex px-4 gap-6">
             {[
               ["feed", "Chat"],
+              ["balances", "Saldos"],
               ["summary", "Resumo"],
             ].map(([key, label]) => (
               <button key={key} onClick={() => setTab(key)} className="pb-3 f-body text-sm font-medium relative" style={{ color: tab === key ? C.paper : "rgba(251,248,242,0.45)" }}>
@@ -125,9 +126,61 @@ export default function GroupScreen() {
       </div>
 
       <div className="flex-1 max-w-md w-full mx-auto px-4 pt-4 pb-24">
-        {tab === "feed" ? (
+        {tab === "feed" && (
           feed.slice().reverse().map((item) => <FeedRow key={item.id} item={item} onEdit={setEditingExpense} />)
-        ) : (
+        )}
+
+        {tab === "balances" && (
+          <>
+            <p className="f-body text-sm mb-4" style={{ color: C.inkSoft }}>
+              Aqui vês, de forma direta, quanto deves a cada pessoa ou quanto cada pessoa te deve a ti.
+            </p>
+            <div className="rounded-2xl overflow-hidden" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+              {people.length === 0 ? (
+                <p className="f-body text-sm p-4" style={{ color: C.inkSoft }}>
+                  Ainda não há mais ninguém nesta viagem.
+                </p>
+              ) : (
+                people.map((p, i) => (
+                  <div key={p.name} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: i < people.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                    <Avatar name={p.name} size={28} tone={C.inkSoft} />
+                    <div className="flex-1">
+                      {p.balance !== 0 ? (
+                        <span className="f-body text-sm" style={{ color: C.ink }}>
+                          {p.balance > 0 ? (
+                            <>
+                              <span style={{ color: C.inkSoft }}>{p.name} deve-te </span>
+                              <span className="f-mono font-semibold" style={{ color: C.sea }}>{formatEuro(p.balance)}€</span>
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ color: C.inkSoft }}>Deves </span>
+                              <span className="f-mono font-semibold" style={{ color: C.coral }}>{formatEuro(Math.abs(p.balance))}€</span>
+                              <span style={{ color: C.inkSoft }}> a {p.name}</span>
+                            </>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="f-body text-sm" style={{ color: C.ink }}>{p.name}</span>
+                      )}
+                    </div>
+                    {p.balance === 0 ? (
+                      <span className="f-body text-xs flex items-center gap-1" style={{ color: C.sea }}>
+                        <Check size={13} /> Saldado
+                      </span>
+                    ) : (
+                      <button onClick={() => settle(p.name, p.balance)} className="f-body text-xs font-medium px-2.5 py-1 rounded-full" style={{ background: C.ink, color: C.paper }}>
+                        Marcar pago
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+
+        {tab === "summary" && (
           <>
             <div className="rounded-2xl p-4 mb-4" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
               <p className="f-body text-xs mb-1" style={{ color: C.inkSoft }}>Total gasto na viagem</p>
@@ -135,7 +188,7 @@ export default function GroupScreen() {
             </div>
 
             <p className="f-body text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: C.inkSoft }}>Por categoria</p>
-            <div className="rounded-2xl mb-4 overflow-hidden" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+            <div className="rounded-2xl overflow-hidden" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
               {Object.entries(totals).map(([key, val], i, arr) => {
                 const cat = CATS[key];
                 const Icon = cat.icon;
@@ -149,30 +202,6 @@ export default function GroupScreen() {
                   </div>
                 );
               })}
-            </div>
-
-            <p className="f-body text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: C.inkSoft }}>Por pessoa</p>
-            <div className="rounded-2xl overflow-hidden" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-              {people.map((p, i) => (
-                <div key={p.name} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: i < people.length - 1 ? `1px solid ${C.line}` : "none" }}>
-                  <Avatar name={p.name} size={28} tone={C.inkSoft} />
-                  <span className="flex-1 f-body text-sm" style={{ color: C.ink }}>{p.name}</span>
-                  {p.balance === 0 ? (
-                    <span className="f-body text-xs flex items-center gap-1" style={{ color: C.sea }}>
-                      <Check size={13} /> Saldado
-                    </span>
-                  ) : (
-                    <>
-                      <span className="f-mono text-xs font-semibold" style={{ color: p.balance > 0 ? C.sea : C.coral }}>
-                        {p.balance > 0 ? `+${formatEuro(p.balance)}€` : `${formatEuro(p.balance)}€`}
-                      </span>
-                      <button onClick={() => settle(p.name, p.balance)} className="f-body text-xs font-medium px-2.5 py-1 rounded-full" style={{ background: C.ink, color: C.paper }}>
-                        Marcar pago
-                      </button>
-                    </>
-                  )}
-                </div>
-              ))}
             </div>
           </>
         )}
