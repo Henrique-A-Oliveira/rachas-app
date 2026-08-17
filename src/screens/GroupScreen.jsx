@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { ArrowLeft, Plus, Check, Trash2, UserPlus, Copy } from "lucide-react";
 import { C } from "../theme/colors";
 import { computeBalances } from "../utils/balances";
+import { computeSettlements } from "../utils/settlements";
 import { formatEuro } from "../utils/format";
 import { CATS } from "../data/mockData";
 import { useAppData } from "../data/AppDataContext";
@@ -70,10 +71,27 @@ export default function GroupScreen() {
   });
   const totalSpent = Object.values(totals).reduce((a, b) => a + b, 0);
 
-  const people = memberNames.filter((name) => name !== myName).map((name) => ({
-    name,
-    balance: Math.round((balances[name] || 0) * 100) / 100,
-  }));
+  // Transferências mínimas reais entre TODOS os membros (settle-up), não só
+  // entre "eu" e cada pessoa. Isto é o que corrige o caso de haver mais do
+  // que um pagador no grupo: quem não pagou nada pode dever a outra pessoa
+  // que não sejas tu, e isso agora reflete-se corretamente.
+  const settlements = computeSettlements(balances);
+
+  // Filtra só as transferências que te envolvem, para o separador Saldos.
+  // balance > 0  → tu deves a essa pessoa
+  // balance < 0  → essa pessoa deve-te a ti
+  const settlementsWithMe = new Map();
+  settlements.forEach((s) => {
+    if (s.from === myName) settlementsWithMe.set(s.to, s.amount);
+    else if (s.to === myName) settlementsWithMe.set(s.from, -s.amount);
+  });
+
+  const people = memberNames
+    .filter((name) => name !== myName)
+    .map((name) => ({
+      name,
+      balance: settlementsWithMe.get(name) || 0,
+    }));
 
   const inviteLink = `${window.location.origin}${window.location.pathname}#/entrar/${trip.id}?c=${trip.inviteCode}`;
   const copyInviteLink = async () => {
