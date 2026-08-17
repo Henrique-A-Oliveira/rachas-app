@@ -71,11 +71,10 @@ export default function GroupScreen() {
   });
   const totalSpent = Object.values(totals).reduce((a, b) => a + b, 0);
 
-  // Transferências mínimas reais entre TODOS os membros (settle-up), não só
-  // entre "eu" e cada pessoa. Isto é o que corrige o caso de haver mais do
-  // que um pagador no grupo: quem não pagou nada pode dever a outra pessoa
-  // que não sejas tu, e isso agora reflete-se corretamente.
-  const settlements = computeSettlements(balances);
+  // Quem deve a quem, com base nas despesas reais em que cada pessoa
+  // participou (não num saldo abstrato do grupo). Se A deve a B e B deve a A
+  // ao mesmo tempo, isso é deduzido para uma única direção por par.
+  const settlements = computeSettlements(feed, memberNames);
 
   // Filtra só as transferências que te envolvem, para o separador Saldos.
   // balance > 0  → tu deves a essa pessoa
