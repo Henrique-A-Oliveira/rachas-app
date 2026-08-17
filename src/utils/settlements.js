@@ -1,51 +1,57 @@
 /**
- * A partir dos saldos líquidos de cada pessoa (computeBalances), calcula o
- * conjunto mínimo de transferências para todos ficarem a zero.
+ * Calcula quem deve a quem, com base nas despesas reais em que cada pessoa
+ * participou — não num saldo abstrato do grupo.
  *
- * Isto resolve o caso de haver mais do que um "pagador" no grupo: em vez de
- * assumir que toda a gente deve dinheiro diretamente a quem está a ver o
- * ecrã, distribui corretamente entre todos os credores.
+ * Passo 1: para cada despesa, cada participante (exceto quem pagou) fica a
+ *          dever ao pagador a sua fatia.
+ * Passo 2: um pagamento ("marcar pago") reduz o que a pessoa que pagou devia
+ *          a quem recebeu.
+ * Passo 3: para cada par de pessoas, se A deve a B e B deve a A ao mesmo
+ *          tempo (porque participaram em despesas uma da outra), isso é
+ *          deduzido — fica só a diferença, numa única direção.
  *
  * Retorna uma lista de { from, to, amount } — from deve `amount` a to.
  */
-export function computeSettlements(balances) {
+export function computeSettlements(feed, members) {
   const EPS = 0.005;
 
-  const creditors = [];
-  const debtors = [];
-
-  Object.entries(balances).forEach(([name, balance]) => {
-    const rounded = Math.round(balance * 100) / 100;
-    if (rounded > EPS) creditors.push({ name, amount: rounded });
-    else if (rounded < -EPS) debtors.push({ name, amount: -rounded });
+  // debts[A][B] = quanto A deve a B (bruto, antes de deduzir o inverso)
+  const debts = {};
+  members.forEach((m) => {
+    debts[m] = {};
   });
 
-  // Maiores primeiro — minimiza o número de transferências geradas.
-  creditors.sort((a, b) => b.amount - a.amount);
-  debtors.sort((a, b) => b.amount - a.amount);
-
-  const settlements = [];
-  let i = 0;
-  let j = 0;
-
-  while (i < debtors.length && j < creditors.length) {
-    const debtor = debtors[i];
-    const creditor = creditors[j];
-    const amount = Math.min(debtor.amount, creditor.amount);
-
-    if (amount > EPS) {
-      settlements.push({
-        from: debtor.name,
-        to: creditor.name,
-        amount: Math.round(amount * 100) / 100,
+  feed.forEach((item) => {
+    if (item.type === "expense") {
+      const participants = item.participants && item.participants.length ? item.participants : members;
+      const share = item.amount / participants.length;
+      participants.forEach((p) => {
+        if (p !== item.person) {
+          debts[p][item.person] = (debts[p]?.[item.person] || 0) + share;
+        }
       });
+    } else if (item.type === "payment") {
+      // um pagamento de "from" a "to" reduz o que "from" devia a "to"
+      debts[item.from][item.to] = (debts[item.from]?.[item.to] || 0) - item.amount;
     }
+  });
 
-    debtor.amount -= amount;
-    creditor.amount -= amount;
+  // Deduz cada par: só interessa a diferença, numa única direção.
+  const settlements = [];
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) {
+      const a = members[i];
+      const b = members[j];
+      const aOwesB = debts[a]?.[b] || 0;
+      const bOwesA = debts[b]?.[a] || 0;
+      const net = Math.round((aOwesB - bOwesA) * 100) / 100;
 
-    if (debtor.amount <= EPS) i++;
-    if (creditor.amount <= EPS) j++;
+      if (net > EPS) {
+        settlements.push({ from: a, to: b, amount: net });
+      } else if (net < -EPS) {
+        settlements.push({ from: b, to: a, amount: -net });
+      }
+    }
   }
 
   return settlements;
